@@ -291,6 +291,6 @@ class AlarmTableViewWidget(QWidget):
                         self.kafka_producer.send(
                             curr_topic + "Command",
                             key=f"command:{alarm_path}",
-                            value={"user": username, "host": hostname, "command": command_to_send},
+                            value={"user": username, "host": hostname, "command": command_to_send, "severity": alarm_item.pv_severity.value},
                         )
         self.alarmView.selectionModel().reset()
