@@ -1,6 +1,7 @@
 import enum
 import getpass
 import socket
+from datetime import datetime
 from functools import partial
 from kafka.producer import KafkaProducer
 from qtpy.QtCore import QEvent, QModelIndex, QSortFilterProxyModel, Qt, Signal
@@ -291,6 +292,6 @@ class AlarmTableViewWidget(QWidget):
                         self.kafka_producer.send(
                             curr_topic + "Command",
                             key=f"command:{alarm_path}",
-                            value={"user": username, "host": hostname, "command": command_to_send, "severity": alarm_item.pv_severity.value},
+                            value={"user": username, "host": hostname, "command": command_to_send, "severity": alarm_item.pv_severity.value, "timestamp": int(datetime.utcnow().timestamp())},
                         )
         self.alarmView.selectionModel().reset()

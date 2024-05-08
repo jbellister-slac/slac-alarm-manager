@@ -1,6 +1,7 @@
 import getpass
 import socket
 import logging
+from datetime import datetime
 from functools import partial
 from kafka.producer import KafkaProducer
 from pydm.display import load_file
@@ -304,6 +305,7 @@ class AlarmTreeViewWidget(QWidget):
             else:
                 values_to_send["command"] = "unacknowledge"
             values_to_send["severity"] = alarm_item.pv_severity.value
+            values_to_send["timestamp"] = int(datetime.utcnow().timestamp())
         return values_to_send
 
     def send_action(self, acknowledged: Optional[bool] = None, enabled: Optional[bool] = None) -> None:

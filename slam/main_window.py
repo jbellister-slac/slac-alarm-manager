@@ -1,7 +1,7 @@
 import json
 import logging
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 from kafka.consumer.fetcher import ConsumerRecord
 from kafka import KafkaProducer
 from pydm.widgets import PyDMArchiverTimePlot
@@ -331,17 +331,32 @@ class AlarmHandlerMainWindow(QMainWindow):
                     self.acknowledged_alarm_tables["All"].alarmModel.remove_row(alarm_path.split("/")[-1])
         elif key.startswith("command"):
             alarm_path = message.key[8:]
-            current_acknowledged_severity = values.get("Severity", None)
-            if current_acknowledged_severity is None:
-                logger.warning(f"No severity for acknowledged alarm: {alarm_path}")
+            current_acknowledged_severity = values.get("severity", None)
+            current_acknowledged_timestamp = values.get("timestamp", None)
+            command = values.get("command", None)
+            if current_acknowledged_severity is None or current_acknowledged_timestamp is None or command is None:
+                print(f"Missing data for acknowledged alarm: {alarm_path}")
                 return
+
+            if command == "unacknowledge":
+                print('Ignoring unacknowledged')
+                return
+
+            if int(datetime.utcnow().timestamp()) - current_acknowledged_timestamp < 20:
+                print('Ignoring recent ACK')
+                return  # A recent acknowledgement that was user initiated, not the result of a server restart
+
+            if self.alarm_severities[alarm_path] is not None and 'ACK' in self.alarm_severities[alarm_path]:
+                print('Ignoring already acknowledged alarm')
+                return
+
             if self.alarm_severities[alarm_path] is None or AlarmSeverity(current_acknowledged_severity) >= AlarmSeverity(self.alarm_severities[alarm_path]):
                 # This is an alarm server restart, resend the acknowledgement so it does not get dropped
                 self.kafka_producer.send(
                     self.current_alarm_config + "Command",
                     key=f"command:{alarm_path}",
                     value={"user": "slam-server-restart", "host": "S3DF", "command": "acknowledge",
-                           "severity": current_acknowledged_severity},
+                           "severity": current_acknowledged_severity, "timestamp": int(datetime.utcnow().timestamp())},
                 )
             if alarm_path not in self.active_acknowledgements:
                 self.active_acknowledgements[alarm_path] = values.get("Severity", "DEFAULT")
