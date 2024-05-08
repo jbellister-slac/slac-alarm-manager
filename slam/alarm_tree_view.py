@@ -303,6 +303,7 @@ class AlarmTreeViewWidget(QWidget):
                 values_to_send["command"] = "acknowledge"
             else:
                 values_to_send["command"] = "unacknowledge"
+            values_to_send["severity"] = alarm_item.pv_severity.value
         return values_to_send
 
     def send_action(self, acknowledged: Optional[bool] = None, enabled: Optional[bool] = None) -> None:

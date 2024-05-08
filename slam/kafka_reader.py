@@ -22,9 +22,9 @@ class KafkaReader(QObject):
     new_message_signal = Signal(ConsumerRecord)  # Emitted for every new message received
 
     def __init__(self, topics: List[str], bootstrap_servers: List[str], new_message_slot: Callable):
-        self.topics = topics
+        self.topics = topics + [topic + 'Command' for topic in topics]
         self.main_consumer = KafkaConsumer(
-            *topics,
+            *self.topics,
             bootstrap_servers=bootstrap_servers,
             auto_offset_reset="earliest",
             enable_auto_commit=False,

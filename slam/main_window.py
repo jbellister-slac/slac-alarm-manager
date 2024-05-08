@@ -49,6 +49,8 @@ class AlarmHandlerMainWindow(QMainWindow):
 
         self.topics = topics
         self.descriptions = dict()  # Map from alarm path to description
+        self.alarm_severities = dict()  # Map from alarm path to current alarm severity
+        self.active_acknowledgements = dict()  # Map from alarm path (str) to acknowledgement status (bool)
         self.enable_all_topic = True if len(topics) > 1 else False
         self.all_alarms_tree = None
         self.all_active_alarms_table = None
@@ -309,43 +311,64 @@ class AlarmHandlerMainWindow(QMainWindow):
             alarm_config_name = key.split("/")[1]
             if values is not None:
                 # Start from 7: to read past the 'config:' part of the key
-                self.alarm_trees[alarm_config_name].treeModel.update_model(message.key[7:], values)
+                alarm_path = message.key[7:]
+                self.alarm_trees[alarm_config_name].treeModel.update_model(alarm_path, values)
                 # the 'All' tree gets updated by all topics
                 if self.enable_all_topic:
-                    self.alarm_trees["All"].treeModel.update_model(message.key[7:], values)
+                    self.alarm_trees["All"].treeModel.update_model(alarm_path, values)
                 if "description" in values:
-                    self.descriptions[message.key[7:]] = values.get("description")
+                    self.descriptions[alarm_path] = values.get("description")
             else:  # A null message indicates this item should be removed from the tree
-                self.alarm_trees[alarm_config_name].treeModel.remove_item(message.key[7:])
-                self.active_alarm_tables[alarm_config_name].alarmModel.remove_row(message.key[7:].split("/")[-1])
-                self.acknowledged_alarm_tables[alarm_config_name].alarmModel.remove_row(message.key[7:].split("/")[-1])
+                alarm_path = message.key[7:]
+                self.alarm_trees[alarm_config_name].treeModel.remove_item(alarm_path)
+                self.active_alarm_tables[alarm_config_name].alarmModel.remove_row(alarm_path.split("/")[-1])
+                self.acknowledged_alarm_tables[alarm_config_name].alarmModel.remove_row(alarm_path.split("/")[-1])
+                self.alarm_severities.pop(alarm_path, None)
 
                 if self.enable_all_topic:
-                    self.alarm_trees["All"].treeModel.remove_item(message.key[7:])
-                    self.active_alarm_tables["All"].alarmModel.remove_row(message.key[7:].split("/")[-1])
-                    self.acknowledged_alarm_tables["All"].alarmModel.remove_row(message.key[7:].split("/")[-1])
+                    self.alarm_trees["All"].treeModel.remove_item(alarm_path)
+                    self.active_alarm_tables["All"].alarmModel.remove_row(alarm_path.split("/")[-1])
+                    self.acknowledged_alarm_tables["All"].alarmModel.remove_row(alarm_path.split("/")[-1])
         elif key.startswith("command"):
-            pass  # Nothing for us to do
+            alarm_path = message.key[8:]
+            current_acknowledged_severity = values.get("Severity", None)
+            if current_acknowledged_severity is None:
+                logger.warning(f"No severity for acknowledged alarm: {alarm_path}")
+                return
+            if self.alarm_severities[alarm_path] is None or AlarmSeverity(current_acknowledged_severity) >= AlarmSeverity(self.alarm_severities[alarm_path]):
+                # This is an alarm server restart, resend the acknowledgement so it does not get dropped
+                self.kafka_producer.send(
+                    self.current_alarm_config + "Command",
+                    key=f"command:{alarm_path}",
+                    value={"user": "slam-server-restart", "host": "S3DF", "command": "acknowledge",
+                           "severity": current_acknowledged_severity},
+                )
+            if alarm_path not in self.active_acknowledgements:
+                self.active_acknowledgements[alarm_path] = values.get("Severity", "DEFAULT")
+
         elif key.startswith("state"):
             pv = message.key.split("/")[-1]
             alarm_config_name = key.split("/")[1]
+            alarm_path = message.key[6:]
             self.last_received_update_time[alarm_config_name] = datetime.now()
             if self.enable_all_topic:
                 self.last_received_update_time["All"] = datetime.now()
             logger.debug(f"Processing STATE message with key: {message.key} and values: {message.value}")
             if values is None:
-                self.active_alarm_tables[alarm_config_name].alarmModel.remove_row(message.key[6:].split("/")[-1])
-                self.acknowledged_alarm_tables[alarm_config_name].alarmModel.remove_row(message.key[6:].split("/")[-1])
+                self.active_alarm_tables[alarm_config_name].alarmModel.remove_row(alarm_path.split("/")[-1])
+                self.acknowledged_alarm_tables[alarm_config_name].alarmModel.remove_row(alarm_path.split("/")[-1])
 
                 if self.enable_all_topic:
-                    self.active_alarm_tables["All"].alarmModel.remove_row(message.key[6:].split("/")[-1])
-                    self.acknowledged_alarm_tables["All"].alarmModel.remove_row(message.key[6:].split("/")[-1])
+                    self.active_alarm_tables["All"].alarmModel.remove_row(alarm_path.split("/")[-1])
+                    self.acknowledged_alarm_tables["All"].alarmModel.remove_row(alarm_path.split("/")[-1])
+                self.alarm_severities.pop(alarm_path, None)
                 return
             if len(values) <= 2:
                 return  # This is the heartbeat message which doesn't get recorded
             time = ""
             if "time" in values:
                 time = datetime.fromtimestamp(values["time"]["seconds"])
+            self.alarm_severities[alarm_path] = values["severity"]
             self.alarm_update_signal.emit(
                 alarm_config_name,
                 pv,
